@@ -68,8 +68,10 @@ impl<const IN: usize, const OUT: usize> Context<IN, OUT> {
             ..Default::default()
         };
 
+        println!("starting stream ...");
         self.stream.play().ok();
 
+        println!("starting gui ...");
         eframe::run_native(
             "DSP Test",
             options,
@@ -82,6 +84,7 @@ impl<const IN: usize, const OUT: usize> Context<IN, OUT> {
 
 impl<const IN: usize, const OUT: usize> eframe::App for Context<IN, OUT> {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        println!("updating frame ...");
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("My egui Application");
             ui.label("Hello");
