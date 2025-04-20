@@ -6,6 +6,8 @@ edition = "2024"
 [dependencies]
 assert_no_alloc = "1.1.2"
 cpal = "0.15.3"
+eframe = "0.31.1"
 egui = "0.31.1"
 egui_plot = "0.32.1"
+rtrb = "0.3.2"
 rustfft = "6.3.0"
