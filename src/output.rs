@@ -1,14 +1,19 @@
 use std::sync::{Arc, Mutex};
 use cpal::{Stream, SampleFormat};
 use cpal::traits::{HostTrait, DeviceTrait};
-use rtrb::Consumer;
+use rtrb::{Consumer, Producer};
 
-use crate::{Module, OUTPUT_BUFFER_SIZE};
+use crate::Module;
+use crate::input::{Channel, Event, Message};
+
+pub const OUTPUT_BUFFER_SIZE: usize = 2048;
+pub const EVENT_UPDATE_INTERVAL: usize = 1024;
 
 
 pub fn build_output_stream<M, const IN: usize, const OUT: usize>(
     mut module: M,
-    mut receiver: Consumer<[f32; IN]>,
+    mut receiver: Consumer<Message>,
+    mut sender: Producer<Event<IN>>,
     output_buffer: Arc<Mutex<[[f32; OUTPUT_BUFFER_SIZE]; OUT]>>
 ) -> Stream
 where
@@ -23,22 +28,41 @@ where
     assert!(config.sample_format() == SampleFormat::F32);
 
     let mut buffer_index = 0;
+    let mut input_channels = [(); IN].map(|_| Channel::new());
+    let mut input_buffer = [0.0; IN];
+
     device.build_output_stream(
         &config.config(),
+
+        // Audio Callback
         move |data: &mut [f32], _| {
-            if let Ok(input) = receiver.pop() {
-                module.map_inputs(&input);
+
+            // Handle incoming messages from UI Thread
+            while let Ok(msg) = receiver.pop() {
+                input_channels[msg.channel].handle_command(msg.command);
             }
 
+            // Handle module inputs
+            for i in 0..IN {
+                input_buffer[i] = input_channels[i].process();
+            }
+            module.map_inputs(&input_buffer);
+
+            // Handle module outputs and copy to ouput buffer
             let mut output_buffer = output_buffer.lock().unwrap();
             for out_frame in data.chunks_mut(channels) {
-                let mut output = (&mut out_frame[0..OUT]).try_into().unwrap();
-                module.map_outputs(&mut output);
+                let mut outputs = (&mut out_frame[0..OUT]).try_into().unwrap();
+                module.map_outputs(&mut outputs);
 
                 for i in 0..OUT {
-                    output_buffer[i][buffer_index] = output[i];
+                    output_buffer[i][buffer_index] = outputs[i];
                 }
                 buffer_index = (buffer_index + 1) % OUTPUT_BUFFER_SIZE;
+            }
+
+            // Send state of inputs to main thread.  Ignore Errors.
+            if buffer_index % EVENT_UPDATE_INTERVAL == 0 {
+                sender.push(Event::State(input_channels)).ok();
             }
         },
         move |err| {
@@ -51,7 +75,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    // use super::*;
 
     #[test]
     fn list_hosts() {

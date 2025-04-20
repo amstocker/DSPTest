@@ -1,17 +1,17 @@
 pub mod input;
 pub mod output;
+pub mod analyze;
 
 use std::sync::{Arc, Mutex};
 use cpal::{traits::StreamTrait, Stream};
 use eframe::egui;
-use output::build_output_stream;
-use rtrb::{Producer, RingBuffer};
+use rtrb::{Consumer, Producer, RingBuffer};
 
-use crate::input::Channel;
+use crate::input::{Event, Message, Widget};
+use crate::output::{OUTPUT_BUFFER_SIZE, build_output_stream};
 
 
-const OUTPUT_BUFFER_SIZE: usize = 2048;
-
+const RINGBUFFER_CAPACITY: usize = 8;
 
 pub trait Module<const IN: usize, const OUT: usize>: 'static + Sized + Send {
     fn map_inputs(&mut self, input_buffer: &[f32; IN]);
@@ -26,10 +26,12 @@ pub trait Module<const IN: usize, const OUT: usize>: 'static + Sized + Send {
 
 
 pub struct Context<const IN: usize, const OUT: usize> {
-    inputs: [Channel; IN],
-    sender: Producer<[f32; IN]>,
     stream: Stream,
-    output_buffer: Arc<Mutex<[[f32; OUTPUT_BUFFER_SIZE]; OUT]>>
+    sender: Producer<Message>,
+    receiver: Consumer<Event<IN>>,
+    input_widgets: [Widget; IN],
+    output_buffer: Arc<Mutex<[[f32; OUTPUT_BUFFER_SIZE]; OUT]>>,
+    output_buffer_copy: [[f32; OUTPUT_BUFFER_SIZE]; OUT]
 }
 
 impl<const IN: usize, const OUT: usize> Context<IN, OUT> {
@@ -38,9 +40,14 @@ impl<const IN: usize, const OUT: usize> Context<IN, OUT> {
         M: 'static + Module<IN, OUT> + Send
     {
         let (
-            sender,
-            receiver
-        ) = RingBuffer::new(8);
+            message_sender,
+            message_receiver
+        ) = RingBuffer::new(RINGBUFFER_CAPACITY);
+
+        let (
+            event_sender,
+            event_receiver
+        ) = RingBuffer::new(RINGBUFFER_CAPACITY);
 
         let output_buffer = Arc::new(
             Mutex::new(
@@ -50,28 +57,36 @@ impl<const IN: usize, const OUT: usize> Context<IN, OUT> {
 
         let stream = build_output_stream(
             module,
-            receiver,
+            message_receiver,
+            event_sender,
             output_buffer.clone()
         );
 
+        let mut index = 0;
+        let input_widgets = [(); IN].map(|_| {
+            let widget = Widget::new(index);
+            index += 1;
+            widget
+        });
+
         Context {
-            inputs: [(); IN].map(|_| Channel::new()),
-            sender,
             stream,
-            output_buffer
+            sender: message_sender,
+            receiver: event_receiver,
+            input_widgets,
+            output_buffer,
+            output_buffer_copy: [[0.0; OUTPUT_BUFFER_SIZE]; OUT]
         }
     }
 
     fn run(self) -> eframe::Result {
         let options = eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default().with_inner_size([320.0, 240.0]),
+            viewport: egui::ViewportBuilder::default().with_inner_size([1024.0, 768.0]),
             ..Default::default()
         };
 
-        println!("starting stream ...");
         self.stream.play().ok();
 
-        println!("starting gui ...");
         eframe::run_native(
             "DSP Test",
             options,
@@ -84,16 +99,27 @@ impl<const IN: usize, const OUT: usize> Context<IN, OUT> {
 
 impl<const IN: usize, const OUT: usize> eframe::App for Context<IN, OUT> {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        println!("updating frame ...");
+        while let Ok(Event::State(input_channels)) = self.receiver.pop() {
+            for i in 0..IN {
+                self.input_widgets[i].set_model(input_channels[i]);
+            }
+        }
+
+        egui::SidePanel::left("InputControls").show(ctx, |ui| {
+            for widget in &mut self.input_widgets {
+                widget.render(ui, &mut self.sender);
+            }
+        });
+        
+        self.output_buffer_copy.copy_from_slice(
+            self.output_buffer.lock().unwrap().as_slice()
+        );
+
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("My egui Application");
+            ui.heading("Output");
             ui.label("Hello");
         });
-
-        let mut input_buffer = [0.0; IN];
-        for i in 0..IN {
-            input_buffer[i] = self.inputs[i].produce();
-        }
-        self.sender.push(input_buffer).ok();
+        
+        ctx.request_repaint();
     }
 }
