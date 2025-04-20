@@ -1,8 +1,8 @@
-use assert_no_alloc::*;
-
+use std::sync::{Arc, Mutex};
 use cpal::{Stream, SampleFormat};
 use cpal::traits::{HostTrait, DeviceTrait};
 use rtrb::Consumer;
+use assert_no_alloc::*;
 
 use crate::{Module, OUTPUT_BUFFER_SIZE};
 
@@ -14,7 +14,7 @@ static A: AllocDisabler = AllocDisabler;
 pub fn build_output_stream<M, const IN: usize, const OUT: usize>(
     mut module: M,
     mut receiver: Consumer<[f32; IN]>,
-    output_buffer_unsafe_copy: &'static mut [[f32; OUTPUT_BUFFER_SIZE]; OUT]
+    output_buffer: Arc<Mutex<[[f32; OUTPUT_BUFFER_SIZE]; OUT]>>
 ) -> Stream
 where
     M: 'static + Module<IN, OUT> + Send 
@@ -32,16 +32,17 @@ where
         &config.config(),
         move |data: &mut [f32], _| {
             assert_no_alloc(|| {
-                if let Ok(input_buffer) = receiver.pop() {
-                    module.map_inputs(&input_buffer);
+                if let Ok(input) = receiver.pop() {
+                    module.map_inputs(&input);
                 }
 
+                let mut output_buffer = output_buffer.lock().unwrap();
                 for out_frame in data.chunks_mut(channels) {
-                    let mut output_buffer = (&mut out_frame[0..OUT]).try_into().unwrap();
-                    module.map_outputs(&mut output_buffer);
+                    let mut output = (&mut out_frame[0..OUT]).try_into().unwrap();
+                    module.map_outputs(&mut output);
 
                     for i in 0..OUT {
-                        output_buffer_unsafe_copy[i][buffer_index] = output_buffer[i];
+                        output_buffer[i][buffer_index] = output[i];
                     }
                     buffer_index = (buffer_index + 1) % OUTPUT_BUFFER_SIZE;
                 }

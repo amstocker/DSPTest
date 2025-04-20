@@ -1,6 +1,7 @@
 pub mod input;
 pub mod output;
 
+use std::sync::{Arc, Mutex};
 use cpal::{traits::StreamTrait, Stream};
 use eframe::egui;
 use output::build_output_stream;
@@ -28,7 +29,7 @@ pub struct Context<const IN: usize, const OUT: usize> {
     inputs: [Channel; IN],
     sender: Producer<[f32; IN]>,
     stream: Stream,
-    output_buffer: [[f32; OUTPUT_BUFFER_SIZE]; OUT]
+    output_buffer: Arc<Mutex<[[f32; OUTPUT_BUFFER_SIZE]; OUT]>>
 }
 
 impl<const IN: usize, const OUT: usize> Context<IN, OUT> {
@@ -41,15 +42,16 @@ impl<const IN: usize, const OUT: usize> Context<IN, OUT> {
             receiver
         ) = RingBuffer::new(8);
 
-        let mut output_buffer = [[0.0; OUTPUT_BUFFER_SIZE]; OUT];
-        let output_buffer_unsafe_copy = unsafe {
-            std::slice::from_raw_parts_mut(&mut output_buffer[0], OUT)
-        };
-        
+        let output_buffer = Arc::new(
+            Mutex::new(
+                [[0.0; OUTPUT_BUFFER_SIZE]; OUT]
+            )
+        );
+
         let stream = build_output_stream(
             module,
             receiver,
-            output_buffer_unsafe_copy.try_into().unwrap()
+            output_buffer.clone()
         );
 
         Context {
