@@ -5,6 +5,7 @@ pub mod analyze;
 use std::sync::{Arc, Mutex};
 use cpal::{traits::StreamTrait, Stream};
 use eframe::egui;
+use egui_plot::{Line, Plot, PlotPoint, PlotPoints};
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::input::{Event, Message, Widget};
@@ -31,7 +32,8 @@ pub struct Context<const IN: usize, const OUT: usize> {
     receiver: Consumer<Event<IN>>,
     input_widgets: [Widget; IN],
     output_buffer: Arc<Mutex<[[f32; OUTPUT_BUFFER_SIZE]; OUT]>>,
-    output_buffer_copy: [[f32; OUTPUT_BUFFER_SIZE]; OUT]
+    output_buffer_plot: [[PlotPoint; OUTPUT_BUFFER_SIZE]; OUT],
+    output_channel: usize
 }
 
 impl<const IN: usize, const OUT: usize> Context<IN, OUT> {
@@ -68,6 +70,13 @@ impl<const IN: usize, const OUT: usize> Context<IN, OUT> {
             index += 1;
             widget
         });
+        
+        let mut output_buffer_plot = [[PlotPoint::new(0.0, 0.0); OUTPUT_BUFFER_SIZE]; OUT];
+        for i in 0..OUTPUT_BUFFER_SIZE {
+            for j in 0..OUT {
+                output_buffer_plot[j][i] = PlotPoint::new(i as f64, 0.0);
+            }
+        }
 
         Context {
             stream,
@@ -75,7 +84,17 @@ impl<const IN: usize, const OUT: usize> Context<IN, OUT> {
             receiver: event_receiver,
             input_widgets,
             output_buffer,
-            output_buffer_copy: [[0.0; OUTPUT_BUFFER_SIZE]; OUT]
+            output_buffer_plot,
+            output_channel: 0
+        }
+    }
+
+    fn copy_output_buffer(&mut self) {
+        let output_buffer = self.output_buffer.lock().unwrap();
+        for j in 0..OUT {
+            for i in 0..OUTPUT_BUFFER_SIZE {
+                self.output_buffer_plot[j][i].y = output_buffer[j][i] as f64;
+            }
         }
     }
 
@@ -111,13 +130,24 @@ impl<const IN: usize, const OUT: usize> eframe::App for Context<IN, OUT> {
             }
         });
         
-        self.output_buffer_copy.copy_from_slice(
-            self.output_buffer.lock().unwrap().as_slice()
-        );
+        self.copy_output_buffer();
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Output");
-            ui.label("Hello");
+            ui.horizontal(|ui| {
+                ui.label("Output Channel:");
+                egui::ComboBox::from_id_salt("OutputSelect")
+                    .selected_text(format!("{:?}", self.output_channel))
+                    .show_ui(ui, |ui| {
+                        for i in 0..OUT {
+                            ui.selectable_value(&mut self.output_channel, i, i.to_string());
+                        }
+                    });
+            });
+            
+            
+            Plot::new("Time").show(ui, |plot_ui| {
+                plot_ui.line(Line::new("Output", self.output_buffer_plot[self.output_channel].as_slice()));
+            });
         });
         
         ctx.request_repaint();

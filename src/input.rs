@@ -47,7 +47,7 @@ impl Channel {
         Channel {
             wave: Wave::Sine,
             phase: 0.0,
-            frequency: 0.1,
+            frequency: 0.001,
             scale: 1.0,
             offset: 0.0
         }
