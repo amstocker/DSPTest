@@ -144,16 +144,19 @@ impl Widget {
             }
         });
 
-        if let Wave::Square { pw } = &mut self.model.wave {
-            if ui.add(
-                egui::Slider::new(pw, 0.0..=1.0)
-                    .custom_formatter(|pw, _| format!("{:.0}%", 100.0 * pw))
-            ).changed() {
-                sender.push(Message {
-                    channel: self.index,
-                    command: Command::SetWave(self.model.wave)
-                }).unwrap();
+        ui.horizontal(|ui| {
+            ui.label("Width:");
+            if let Wave::Square { pw } = &mut self.model.wave {
+                if ui.add(
+                    egui::Slider::new(pw, 0.0..=1.0)
+                        .custom_formatter(|pw, _| format!("{:.0}%", 100.0 * pw))
+                ).changed() {
+                    sender.push(Message {
+                        channel: self.index,
+                        command: Command::SetWave(self.model.wave)
+                    }).unwrap();
+                };
             }
-        }
+        });
     }
 }

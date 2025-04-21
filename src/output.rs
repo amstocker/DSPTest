@@ -42,18 +42,20 @@ where
                 input_channels[msg.channel].handle_command(msg.command);
             }
 
-            // Handle module inputs
-            for i in 0..IN {
-                input_buffer[i] = input_channels[i].process();
-            }
-            module.map_inputs(&input_buffer);
-
-            // Handle module outputs and copy to ouput buffer
             let mut output_buffer = output_buffer.lock().unwrap();
             for out_frame in data.chunks_mut(channels) {
+                
+                // Handle module inputs
+                for i in 0..IN {
+                    input_buffer[i] = input_channels[i].process();
+                }
+                module.map_inputs(&input_buffer);
+                
+                // Handle module outputs
                 let mut outputs = (&mut out_frame[0..OUT]).try_into().unwrap();
                 module.map_outputs(&mut outputs);
 
+                // Copy to output buffer
                 for i in 0..OUT {
                     output_buffer[i][buffer_index] = outputs[i];
                 }
