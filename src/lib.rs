@@ -131,10 +131,11 @@ impl<const IN: usize, const OUT: usize, const SIZE: usize> Context<IN, OUT, SIZE
 
         let mut max_norm = 0.0;
         for i in 0..SIZE {
-            let norm = self.output_spectrum_complex[i].norm() as f64;
-            self.output_spectrum_filtered[i] += 0.1 * (norm - self.output_spectrum_filtered[i]);
-
+            let norm_unfiltered = self.output_spectrum_complex[i].norm() as f64;
+            
+            self.output_spectrum_filtered[i] += 0.1 * (norm_unfiltered - self.output_spectrum_filtered[i]);
             let norm_filtered = self.output_spectrum_filtered[i];
+            
             self.output_spectrum_magnitude[i].y = norm_filtered;
 
             if norm_filtered > max_norm {
