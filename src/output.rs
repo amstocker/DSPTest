@@ -6,18 +6,34 @@ use rtrb::{Consumer, Producer};
 use crate::Module;
 use crate::input::{Channel, Event, Message};
 
-pub const OUTPUT_BUFFER_SIZE: usize = 2048;
+//pub const OUTPUT_BUFFER_SIZE: usize = 2048;
 pub const EVENT_UPDATE_INTERVAL: usize = 1024;
+pub const SAMPLE_RATE: usize = 48_000;
 
 
-pub fn build_output_stream<M, const IN: usize, const OUT: usize>(
+pub struct OutputBuffer<const N: usize, const OUT: usize> {
+    pub buffer: [[f32; N]; OUT],
+    pub index: usize
+}
+
+impl<const N: usize, const OUT: usize> OutputBuffer<N, OUT> {
+    pub fn new() -> Self {
+        OutputBuffer {
+            buffer: [[0.0; N]; OUT],
+            index: 0
+        }
+    }
+}
+
+
+pub fn build_output_stream<M, const IN: usize, const OUT: usize, const SIZE: usize>(
     mut module: M,
     mut receiver: Consumer<Message>,
     mut sender: Producer<Event<IN>>,
-    output_buffer: Arc<Mutex<[[f32; OUTPUT_BUFFER_SIZE]; OUT]>>
+    output_buffer: Arc<Mutex<OutputBuffer<SIZE, OUT>>>
 ) -> Stream
 where
-    M: 'static + Module<IN, OUT> + Send 
+    M: 'static + Module<IN, OUT, SIZE> + Send 
 {
     let host = cpal::default_host();
     let device = host.default_output_device().unwrap();
@@ -27,7 +43,6 @@ where
     assert!(OUT <= channels);
     assert!(config.sample_format() == SampleFormat::F32);
 
-    let mut buffer_index = 0;
     let mut input_channels = [(); IN].map(|_| Channel::new());
     let mut input_buffer = [0.0; IN];
 
@@ -57,13 +72,14 @@ where
 
                 // Copy to output buffer
                 for i in 0..OUT {
-                    output_buffer[i][buffer_index] = outputs[i];
+                    let index = output_buffer.index;
+                    output_buffer.buffer[i][index] = outputs[i];
                 }
-                buffer_index = (buffer_index + 1) % OUTPUT_BUFFER_SIZE;
+                output_buffer.index = (output_buffer.index + 1) % SIZE;
             }
 
             // Send state of inputs to main thread.  Ignore Errors.
-            if buffer_index % EVENT_UPDATE_INTERVAL == 0 {
+            if output_buffer.index % EVENT_UPDATE_INTERVAL == 0 {
                 sender.push(Event::State(input_channels)).ok();
             }
         },

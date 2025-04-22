@@ -83,7 +83,7 @@ impl Channel {
                 if self.phase < pw {
                     1.0
                 } else {
-                    0.0
+                    -1.0
                 },
         };
         
@@ -109,7 +109,7 @@ pub struct Message {
 
 
 pub struct Widget {
-    index: usize,
+    pub index: usize,
     model: Channel
 }
 
@@ -126,8 +126,54 @@ impl Widget {
     }
 
     pub fn render(&mut self, ui: &mut Ui, sender: &mut Producer<Message>) {
+        ui.label("Frequency:");
         ui.horizontal(|ui| {
-            ui.label("Wave:");
+            if ui.add(
+                egui::Slider::new(&mut self.model.frequency, 1e-5..=5e-1)
+                    .logarithmic(true)
+                    .custom_formatter(|f, _| format!("{:.4}", f))
+            ).changed() {
+                sender.push(Message {
+                    channel: self.index,
+                    command: Command::SetFrequency(self.model.frequency)
+                }).unwrap();
+            };
+        });
+
+        ui.end_row();
+
+        ui.label("Scale:");
+        ui.horizontal(|ui| {
+            if ui.add(
+                egui::Slider::new(&mut self.model.scale, 0.0..=1.0)
+                    .custom_formatter(|f, _| format!("{:.2}", f))
+            ).changed() {
+                sender.push(Message {
+                    channel: self.index,
+                    command: Command::SetScale(self.model.scale)
+                }).unwrap();
+            };
+        });
+
+        ui.end_row();
+
+        ui.label("Offset:");
+        ui.horizontal(|ui| {
+            if ui.add(
+                egui::Slider::new(&mut self.model.offset, -1.0..=1.0)
+                    .custom_formatter(|f, _| format!("{:.2}", f))
+            ).changed() {
+                sender.push(Message {
+                    channel: self.index,
+                    command: Command::SetOffset(self.model.offset)
+                }).unwrap();
+            };
+        });
+
+        ui.end_row();
+
+        ui.label("Wave:");
+        ui.horizontal(|ui| {
             for wave in Wave::iter() {
                 if ui.add(
                     egui::SelectableLabel::new(
@@ -135,7 +181,10 @@ impl Widget {
                         wave.to_string()
                     )
                 ).clicked() {
-                    self.model.wave = wave;
+                    self.model.wave = match wave {
+                        Wave::Square { .. } => Wave::Square { pw: 0.5 },
+                        other => other
+                    };
                     sender.push(Message {
                         channel: self.index,
                         command: Command::SetWave(self.model.wave)
@@ -144,8 +193,10 @@ impl Widget {
             }
         });
 
+        ui.end_row();
+
+        ui.label("Width:");
         ui.horizontal(|ui| {
-            ui.label("Width:");
             if let Wave::Square { pw } = &mut self.model.wave {
                 if ui.add(
                     egui::Slider::new(pw, 0.0..=1.0)
@@ -158,5 +209,7 @@ impl Widget {
                 };
             }
         });
+
+        ui.end_row();
     }
 }
