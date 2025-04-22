@@ -6,20 +6,19 @@ use rtrb::{Consumer, Producer};
 use crate::Module;
 use crate::input::{Channel, Event, Message};
 
-//pub const OUTPUT_BUFFER_SIZE: usize = 2048;
 pub const EVENT_UPDATE_INTERVAL: usize = 1024;
 pub const SAMPLE_RATE: usize = 48_000;
 
 
-pub struct OutputBuffer<const N: usize, const OUT: usize> {
-    pub buffer: [[f32; N]; OUT],
+pub struct OutputBuffer<const OUT: usize, const SIZE: usize> {
+    pub buffer: [[f32; SIZE]; OUT],
     pub index: usize
 }
 
-impl<const N: usize, const OUT: usize> OutputBuffer<N, OUT> {
+impl<const OUT: usize, const SIZE: usize> OutputBuffer<OUT, SIZE> {
     pub fn new() -> Self {
         OutputBuffer {
-            buffer: [[0.0; N]; OUT],
+            buffer: [[0.0; SIZE]; OUT],
             index: 0
         }
     }
@@ -30,7 +29,7 @@ pub fn build_output_stream<M, const IN: usize, const OUT: usize, const SIZE: usi
     mut module: M,
     mut receiver: Consumer<Message>,
     mut sender: Producer<Event<IN>>,
-    output_buffer: Arc<Mutex<OutputBuffer<SIZE, OUT>>>
+    output_buffer: Arc<Mutex<OutputBuffer<OUT, SIZE>>>
 ) -> Stream
 where
     M: 'static + Module<IN, OUT, SIZE> + Send 

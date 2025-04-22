@@ -1,6 +1,12 @@
 use std::f32::consts::PI;
 
 
+#[derive(PartialEq)]
+pub enum PlotView {
+    TimeSeries,
+    Spectrum
+}
+
 pub fn build_window_function<const N: usize>(a: f32) -> [f32; N] {
     let mut window = [0.0; N];
     for i in 0..N {

@@ -17,10 +17,10 @@ use crate::output::{
     OutputBuffer,
     build_output_stream
 };
-use crate::analyze::build_window_function;
+use crate::analyze::{build_window_function, PlotView};
 
 
-const RINGBUFFER_CAPACITY: usize = 8;
+const RINGBUFFER_CAPACITY: usize = 64;
 
 pub trait Module<const IN: usize, const OUT: usize, const SIZE: usize>: 'static + Sized + Send {
     fn map_inputs(&mut self, input_buffer: &[f32; IN]);
@@ -39,13 +39,14 @@ pub struct Context<const IN: usize, const OUT: usize, const SIZE: usize> {
     sender: Producer<Message>,
     receiver: Consumer<Event<IN>>,
     input_widgets: [Widget; IN],
-    output_buffer: Arc<Mutex<OutputBuffer<SIZE, OUT>>>,
+    output_buffer: Arc<Mutex<OutputBuffer<OUT, SIZE>>>,
     output_buffer_time_series: [PlotPoint; SIZE],
     output_spectrum_complex: [Complex32; SIZE],
     output_spectrum_magnitude: [PlotPoint; SIZE],
     output_spectrum_filtered: [f64; SIZE],
     fft_window_func: [f32; SIZE],
     output_channel: usize,
+    plot_view: PlotView,
     running: bool
 }
 
@@ -106,6 +107,7 @@ impl<const IN: usize, const OUT: usize, const SIZE: usize> Context<IN, OUT, SIZE
             output_spectrum_filtered: [0.0; SIZE],
             fft_window_func: build_window_function(0.5),
             output_channel: 0,
+            plot_view: PlotView::TimeSeries,
             running: true
         }
     }
@@ -173,10 +175,6 @@ impl<const IN: usize, const OUT: usize, const SIZE: usize> eframe::App for Conte
 
         self.process_output_buffer();
 
-        //egui::TopBottomPanel::top("Menu").show(ctx, |ui| {
-        //    ui.label("[Audio Out options here]");
-        //});
-
         egui::SidePanel::left("InputControls")
             .resizable(false)
             .show(ctx, |ui| {
@@ -207,21 +205,47 @@ impl<const IN: usize, const OUT: usize, const SIZE: usize> eframe::App for Conte
                             ui.selectable_value(&mut self.output_channel, i, i.to_string());
                         }
                     });
+
+                ui.separator();
+
+                ui.label("Plot View:");
+
+                if ui.add(
+                    egui::SelectableLabel::new(
+                        self.plot_view == PlotView::TimeSeries,
+                        "Time Series"
+                    )
+                ).clicked() {
+                    self.plot_view = PlotView::TimeSeries;
+                }
+
+                if ui.add(
+                    egui::SelectableLabel::new(
+                        self.plot_view == PlotView::Spectrum,
+                        "Spectrum"
+                    )
+                ).clicked() {
+                    self.plot_view = PlotView::Spectrum;
+                }
             });
             
             ui.separator();
             
-            //Plot::new("Time")
-            //    .show(ui, |plot_ui| {
-            //        plot_ui.line(Line::new("Output", self.output_buffer_time_series.as_slice()));
-            //    });
-
-            Plot::new("Spectrum")
-                .show(ui, |plot_ui| {
-                    plot_ui.line(
-                        Line::new("Output", &self.output_spectrum_magnitude[0..(SIZE / 2)])
-                    );
-                });
+            match self.plot_view {
+                PlotView::TimeSeries => Plot::new("Time Series")
+                    .show(ui, |plot_ui| {
+                        plot_ui.line(
+                            Line::new("Output", self.output_buffer_time_series.as_slice())
+                        );
+                    }),
+                PlotView::Spectrum => Plot::new("Spectrum")
+                    .show(ui, |plot_ui| {
+                        plot_ui.line(
+                            Line::new("Output", &self.output_spectrum_magnitude[0..(SIZE / 2)])
+                        );
+                    }),
+            }
+            
         });
         
         if self.running {
