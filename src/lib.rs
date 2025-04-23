@@ -2,20 +2,23 @@ pub mod input;
 pub mod output;
 pub mod analyze;
 
+use std::f32::consts::PI;
 use std::sync::{Arc, Mutex};
 use cpal::{traits::StreamTrait, Stream};
 use eframe::egui;
-use egui_plot::{Line, Plot, PlotPoint};
+use egui::Vec2b;
+use egui_plot::{Line, Plot, PlotBounds, PlotPoint};
 use rtrb::{Consumer, Producer, RingBuffer};
 use rustfft::num_complex::Complex32;
 use rustfft::Fft;
 use rustfft::{algorithm::Radix4, FftDirection};
 
-use crate::input::{Event, Message, Widget};
+use crate::input::{Event, Message, Widget as InputWidget};
 use crate::output::{
     SAMPLE_RATE,
     OutputBuffer,
-    build_output_stream
+    build_output_stream,
+    Widget as OutputWidget
 };
 use crate::analyze::{build_window_function, PlotView};
 
@@ -38,11 +41,15 @@ pub struct Context<const IN: usize, const OUT: usize, const SIZE: usize> {
     stream: Stream,
     sender: Producer<Message>,
     receiver: Consumer<Event<IN>>,
-    input_widgets: [Widget; IN],
+    input_widgets: [InputWidget; IN],
+    output_widget: OutputWidget,
     output_buffer: Arc<Mutex<OutputBuffer<OUT, SIZE>>>,
     output_buffer_time_series: [PlotPoint; SIZE],
+    output_buffer_freq_est: f32,
+    output_buffer_phase: f32,
     output_spectrum_complex: [Complex32; SIZE],
     output_spectrum_magnitude: [PlotPoint; SIZE],
+    output_spectrum_phase: [f32; SIZE],
     output_spectrum_filtered: [f64; SIZE],
     fft_window_func: [f32; SIZE],
     output_channel: usize,
@@ -78,7 +85,7 @@ impl<const IN: usize, const OUT: usize, const SIZE: usize> Context<IN, OUT, SIZE
 
         let mut index = 0;
         let input_widgets = [(); IN].map(|_| {
-            let widget = Widget::new(index);
+            let widget = InputWidget::new(index);
             index += 1;
             widget
         });
@@ -90,7 +97,7 @@ impl<const IN: usize, const OUT: usize, const SIZE: usize> Context<IN, OUT, SIZE
 
         let mut output_spectrum_magnitude = [PlotPoint::new(0.0, 0.0); SIZE];
         for i in 0..SIZE {
-            let f = ((i + 1) as f64 / SIZE as f64) * SAMPLE_RATE as f64;
+            let f = (i + 1) as f64 / SIZE as f64;
             output_spectrum_magnitude[i].x = f.log2();
             // output_spectrum_magnitude[i].x = f;
         }
@@ -100,12 +107,16 @@ impl<const IN: usize, const OUT: usize, const SIZE: usize> Context<IN, OUT, SIZE
             sender: message_sender,
             receiver: event_receiver,
             input_widgets,
+            output_widget: OutputWidget::new(),
             output_buffer,
             output_buffer_time_series: output_buffer_plot,
+            output_buffer_freq_est: 0.0,
+            output_buffer_phase: 0.0,
             output_spectrum_complex: [Complex32::default(); SIZE],
             output_spectrum_magnitude,
+            output_spectrum_phase: [0.0; SIZE],
             output_spectrum_filtered: [0.0; SIZE],
-            fft_window_func: build_window_function(0.5),
+            fft_window_func: build_window_function(),
             output_channel: 0,
             plot_view: PlotView::TimeSeries,
             running: true
@@ -113,11 +124,13 @@ impl<const IN: usize, const OUT: usize, const SIZE: usize> Context<IN, OUT, SIZE
     }
 
     fn process_output_buffer(&mut self) {
-        let output_buffer = self.output_buffer.lock().unwrap();
+        let mut output_buffer = self.output_buffer.lock().unwrap();
+        
+        // Process Spectrum
+        let start = output_buffer.index;
         for i in 0..SIZE {
-            self.output_buffer_time_series[i].y = output_buffer.buffer[self.output_channel][i] as f64;
             self.output_spectrum_complex[i] = Complex32 {
-                re: self.fft_window_func[i] * output_buffer.buffer[self.output_channel][i],
+                re: self.fft_window_func[i] * output_buffer.buffer[self.output_channel][(start + i) % SIZE],
                 im: 0.0
             };
         }
@@ -130,21 +143,67 @@ impl<const IN: usize, const OUT: usize, const SIZE: usize> Context<IN, OUT, SIZE
         fft.process(&mut self.output_spectrum_complex);
 
         let mut max_norm = 0.0;
+        let mut max_norm_index = 0;
+        let mut max_norm_phase_diff = 0.0;
         for i in 0..SIZE {
-            let norm_unfiltered = self.output_spectrum_complex[i].norm() as f64;
+            let (norm, phase) = self.output_spectrum_complex[i].to_polar();
+            //let norm_unfiltered = 20.0 * (r as f64).log10();
+            let norm_unfiltered = norm as f64;
             
-            self.output_spectrum_filtered[i] += 0.1 * (norm_unfiltered - self.output_spectrum_filtered[i]);
+            self.output_spectrum_filtered[i] += 0.5 * (norm_unfiltered - self.output_spectrum_filtered[i]);
             let norm_filtered = self.output_spectrum_filtered[i];
             
             self.output_spectrum_magnitude[i].y = norm_filtered;
 
+            let prev_phase = self.output_spectrum_phase[i];
+            let phase_diff = phase - prev_phase;
+            self.output_spectrum_phase[i] = phase;
+
             if norm_filtered > max_norm {
                 max_norm = norm_filtered;
+                max_norm_index = i;
+                max_norm_phase_diff = phase_diff;
             }
         }
 
         for i in 0..SIZE {
             self.output_spectrum_magnitude[i].y /= max_norm;
+        }
+
+
+        // Process Time Series
+        let dt = output_buffer.counter as f32;
+        output_buffer.counter = 0;
+        
+        if dt != 0.0 {
+            let freq_est = max_norm_index as f32 / SIZE as f32;
+            let dp = max_norm_phase_diff;
+            let mut phase = 0.0;
+            let mut freq_prev = 0.0;
+            self.output_buffer_freq_est = loop {
+                let freq = (dp + phase) / (2.0 * PI * dt);
+                if freq > freq_est {
+                    if freq - freq_est < freq_est - freq_prev {
+                        break freq;
+                    } else {
+                        break freq_prev;
+                    };
+                }
+                freq_prev = freq;
+                phase += 2.0 * PI;
+            };
+        }
+
+        self.output_buffer_phase += self.output_buffer_freq_est * dt;
+        while !(self.output_buffer_phase < 1.0) {
+            self.output_buffer_phase -= 1.0;
+        }
+
+        let shift = (self.output_buffer_phase * SIZE as f32).round() as usize;
+        println!("freq_est: {}, cycles: {}, dt: {}, shift: {}", self.output_buffer_freq_est, self.output_buffer_freq_est * dt, dt, shift);
+        for i in 0..SIZE {
+            self.output_buffer_time_series[i].y = 
+                output_buffer.buffer[self.output_channel][(start + i).wrapping_sub(shift) % SIZE] as f64;
         }
     }
 
@@ -181,18 +240,14 @@ impl<const IN: usize, const OUT: usize, const SIZE: usize> eframe::App for Conte
             .show(ctx, |ui| {
                 ui.heading("Inputs");
                 ui.separator();
-
                 for widget in &mut self.input_widgets {
-                    egui::Grid::new(widget.index)
-                        .striped(true)
-                        .show(ui, |ui| {
-                            widget.render(ui, &mut self.sender);
-                        });
+                    widget.render(ui, &mut self.sender);
                     ui.separator();
                 }
 
                 ui.heading("Options");
                 ui.separator();
+                self.output_widget.render(ui);
             });
         
 
@@ -228,6 +283,15 @@ impl<const IN: usize, const OUT: usize, const SIZE: usize> eframe::App for Conte
                 ).clicked() {
                     self.plot_view = PlotView::Spectrum;
                 }
+
+                if ui.add(
+                    egui::SelectableLabel::new(
+                        self.plot_view == PlotView::Window,
+                        "Window"
+                    )
+                ).clicked() {
+                    self.plot_view = PlotView::Window;
+                }
             });
             
             ui.separator();
@@ -235,16 +299,41 @@ impl<const IN: usize, const OUT: usize, const SIZE: usize> eframe::App for Conte
             match self.plot_view {
                 PlotView::TimeSeries => Plot::new("Time Series")
                     .show(ui, |plot_ui| {
+                        plot_ui.set_plot_bounds(PlotBounds::from_min_max(
+                            [0.0, -1.0],
+                            [SIZE as f64, 1.0]
+                        ));
+                        plot_ui.set_auto_bounds(Vec2b::new(false, false));
                         plot_ui.line(
                             Line::new("Output", self.output_buffer_time_series.as_slice())
                         );
                     }),
                 PlotView::Spectrum => Plot::new("Spectrum")
                     .show(ui, |plot_ui| {
+                        plot_ui.set_plot_bounds(PlotBounds::from_min_max(
+                            [(1.0 / SIZE as f64).log2(), 0.0],
+                            [(0.5_f64).log2(), 1.0]
+                        ));
+                        plot_ui.set_auto_bounds(Vec2b::new(false, false));
                         plot_ui.line(
                             Line::new("Output", &self.output_spectrum_magnitude[0..(SIZE / 2)])
                         );
                     }),
+                PlotView::Window => Plot::new("Window")
+                    .show(ui, |plot_ui| {
+                        plot_ui.set_plot_bounds(PlotBounds::from_min_max(
+                            [0.0, 0.0],
+                            [SIZE as f64, 1.0]
+                        ));
+                        plot_ui.set_auto_bounds(Vec2b::new(false, false));
+
+                        let points = self.fft_window_func.iter().enumerate().map(|(x, &y)| {
+                            [x as f64, y as f64]
+                        }).collect::<Vec<_>>();
+                        plot_ui.line(
+                            Line::new("Output", points)
+                        );
+                    })
             }
             
         });

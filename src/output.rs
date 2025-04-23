@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
-use cpal::{Stream, SampleFormat};
+use cpal::{Device, HostId, SampleFormat, Stream, StreamConfig};
 use cpal::traits::{HostTrait, DeviceTrait};
+use egui::Ui;
 use rtrb::{Consumer, Producer};
 
 use crate::Module;
@@ -12,14 +13,16 @@ pub const SAMPLE_RATE: usize = 48_000;
 
 pub struct OutputBuffer<const OUT: usize, const SIZE: usize> {
     pub buffer: [[f32; SIZE]; OUT],
-    pub index: usize
+    pub index: usize,
+    pub counter: usize
 }
 
 impl<const OUT: usize, const SIZE: usize> OutputBuffer<OUT, SIZE> {
     pub fn new() -> Self {
         OutputBuffer {
             buffer: [[0.0; SIZE]; OUT],
-            index: 0
+            index: 0,
+            counter: 0
         }
     }
 }
@@ -75,6 +78,7 @@ where
                     output_buffer.buffer[i][index] = outputs[i];
                 }
                 output_buffer.index = (output_buffer.index + 1) % SIZE;
+                output_buffer.counter += 1;
             }
 
             // Send state of inputs to main thread.  Ignore Errors.
@@ -90,35 +94,94 @@ where
 }
 
 
-#[cfg(test)]
-mod tests {
+pub struct Widget {
+    hosts: Vec<(HostId, String)>,
+    selected_host_id: HostId,
+    selected_host_name: String,
+    devices: Vec<(Device, String)>,
+    selected_device: Device,
+    selected_device_index: usize,
+    selected_device_name: String,
+    config: StreamConfig
+}
 
-    #[test]
-    fn list_hosts() {
-        use cpal::traits::{HostTrait, DeviceTrait};
-
-        let x = cpal::available_hosts();
-
-        for host in x {
-            println!("Host Name: {:?}", host.name());
-
-            let y = cpal::host_from_id(host);
-            let devices = y.unwrap().output_devices();
-            for d in devices.unwrap() {
-                println!("\tDevice: {:?}", d.name().unwrap());
-                let ic = d.supported_input_configs().unwrap();
-                for c in ic {
-                    println!("\t\tInput Config: {:?}", c);
-                }
-
-                let oc = d.supported_output_configs().unwrap();
-                for c in oc {
-                    println!("\t\tOutput Config: {:?}", c);
-                }
-
-                let dd = d.default_output_config().unwrap();
-                println!("Default Output Config: {:?}", dd.config());
-            }
+impl Widget {
+    pub fn new() -> Self {
+        let hosts = cpal::available_hosts().into_iter()
+            .map(|host| (host, host.name().to_owned()))
+            .collect();
+        let selected_host = cpal::default_host();
+        let selected_host_id = selected_host.id();
+        let selected_host_name = selected_host_id.name().to_string();
+        
+        let devices: Vec<(Device, String)> = selected_host.devices().unwrap()
+            .map(|dev| {
+                let name = dev.name().unwrap();
+                (dev, name)
+            })
+            .collect();
+        let selected_device = selected_host.default_output_device().unwrap();
+        let selected_device_name = selected_device.name().unwrap();
+        let selected_device_index = devices.iter()
+            .enumerate()
+            .find(|(_, (_, dev_name))| *dev_name == selected_device_name)
+            .unwrap()
+            .0;
+        
+        let config = selected_device.default_output_config().unwrap().config();
+        
+        Widget {
+            hosts,
+            selected_host_id,
+            selected_host_name,
+            devices,
+            selected_device,
+            selected_device_index,
+            selected_device_name,
+            config
         }
     }
+
+    pub fn render(&mut self, ui: &mut Ui) -> Option<Stream> {
+        egui::Grid::new("OutputOptions")
+            .striped(true)
+            .show(ui, |ui| {
+                ui.label("Host:");
+                egui::ComboBox::from_id_salt("HostSelect")
+                    .selected_text(format!("{:?}", self.selected_host_name))
+                    .show_ui(ui, |ui| {
+                        for (host, host_name) in &self.hosts {
+                            if ui
+                                .selectable_value(&mut self.selected_host_id, *host, host_name)
+                                .clicked() {
+                                    self.selected_host_id = host.clone();
+                                    self.selected_host_name = self.selected_host_id.name().to_string();
+                            }
+                        }
+                    });
+
+                ui.end_row();
+
+                ui.label("Device:");
+                egui::ComboBox::from_id_salt("DeviceSelect")
+                    .selected_text(format!("{:?}", self.selected_device_name))
+                    .show_ui(ui, |ui| {
+                        for (i, (_, device_name)) in self.devices.iter().enumerate() {
+                            if ui
+                                .selectable_value(&mut self.selected_device_index, i, device_name)
+                                .clicked() {
+                                    let device = &self.devices.get(self.selected_device_index).unwrap().0;
+                                    self.selected_device = device.clone();
+                                    self.selected_device_name = self.selected_device.name().unwrap();
+                                    println!("device changed: {}", self.selected_device_name);
+                            };
+                        }
+                    });
+
+                ui.end_row();
+            });
+
+        None
+    }
 }
+

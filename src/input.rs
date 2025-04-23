@@ -47,7 +47,7 @@ impl Channel {
         Channel {
             wave: Wave::Sine,
             phase: 0.0,
-            frequency: 0.001,
+            frequency: 0.0022,
             scale: 1.0,
             offset: 0.0
         }
@@ -109,7 +109,7 @@ pub struct Message {
 
 
 pub struct Widget {
-    pub index: usize,
+    index: usize,
     model: Channel
 }
 
@@ -126,90 +126,96 @@ impl Widget {
     }
 
     pub fn render(&mut self, ui: &mut Ui, sender: &mut Producer<Message>) {
-        ui.label("Frequency:");
-        ui.horizontal(|ui| {
-            if ui.add(
-                egui::Slider::new(&mut self.model.frequency, 1e-5..=5e-1)
-                    .logarithmic(true)
-                    .custom_formatter(|f, _| format!("{:.4}", f))
-            ).changed() {
-                sender.push(Message {
-                    channel: self.index,
-                    command: Command::SetFrequency(self.model.frequency)
-                }).unwrap();
-            };
-        });
-
-        ui.end_row();
-
-        ui.label("Scale:");
-        ui.horizontal(|ui| {
-            if ui.add(
-                egui::Slider::new(&mut self.model.scale, 0.0..=1.0)
-                    .custom_formatter(|f, _| format!("{:.2}", f))
-            ).changed() {
-                sender.push(Message {
-                    channel: self.index,
-                    command: Command::SetScale(self.model.scale)
-                }).unwrap();
-            };
-        });
-
-        ui.end_row();
-
-        ui.label("Offset:");
-        ui.horizontal(|ui| {
-            if ui.add(
-                egui::Slider::new(&mut self.model.offset, -1.0..=1.0)
-                    .custom_formatter(|f, _| format!("{:.2}", f))
-            ).changed() {
-                sender.push(Message {
-                    channel: self.index,
-                    command: Command::SetOffset(self.model.offset)
-                }).unwrap();
-            };
-        });
-
-        ui.end_row();
-
-        ui.label("Wave:");
-        ui.horizontal(|ui| {
-            for wave in Wave::iter() {
-                if ui.add(
-                    egui::SelectableLabel::new(
-                        self.model.wave == wave,
-                        wave.to_string()
-                    )
-                ).clicked() {
-                    self.model.wave = match wave {
-                        Wave::Square { .. } => Wave::Square { pw: 0.5 },
-                        other => other
+        egui::Grid::new(self.index)
+            .striped(true)
+            .show(ui, |ui| {
+                ui.label("Frequency:");
+                ui.horizontal(|ui| {
+                    if ui.add(
+                        egui::Slider::new(&mut self.model.frequency, 1e-5..=5e-1)
+                            .logarithmic(true)
+                            .custom_formatter(|f, _| format!("{:.4}", f))
+                    ).changed() {
+                        sender.push(Message {
+                            channel: self.index,
+                            command: Command::SetFrequency(self.model.frequency)
+                        }).unwrap();
                     };
-                    sender.push(Message {
-                        channel: self.index,
-                        command: Command::SetWave(self.model.wave)
-                    }).unwrap();
-                };
-            }
-        });
+                });
 
-        ui.end_row();
+                ui.end_row();
 
-        ui.label("Width:");
-        ui.horizontal(|ui| {
-            if let Wave::Square { pw } = &mut self.model.wave {
-                if ui.add(
-                    egui::Slider::new(pw, 0.0..=1.0)
-                        .custom_formatter(|pw, _| format!("{:.0}%", 100.0 * pw))
-                ).changed() {
-                    sender.push(Message {
-                        channel: self.index,
-                        command: Command::SetWave(self.model.wave)
-                    }).unwrap();
-                };
-            }
-        });
+                ui.label("Scale:");
+                ui.horizontal(|ui| {
+                    if ui.add(
+                        egui::Slider::new(&mut self.model.scale, 0.0..=1.0)
+                            .custom_formatter(|f, _| format!("{:.2}", f))
+                    ).changed() {
+                        sender.push(Message {
+                            channel: self.index,
+                            command: Command::SetScale(self.model.scale)
+                        }).unwrap();
+                    };
+                });
 
-        ui.end_row();
+                ui.end_row();
+
+                ui.label("Offset:");
+                ui.horizontal(|ui| {
+                    if ui.add(
+                        egui::Slider::new(&mut self.model.offset, -1.0..=1.0)
+                            .custom_formatter(|f, _| format!("{:.2}", f))
+                    ).changed() {
+                        sender.push(Message {
+                            channel: self.index,
+                            command: Command::SetOffset(self.model.offset)
+                        }).unwrap();
+                    };
+                });
+
+                ui.end_row();
+
+                ui.label("Wave:");
+                ui.horizontal(|ui| {
+                    for wave in Wave::iter() {
+                        if ui.add(
+                            egui::SelectableLabel::new(
+                                self.model.wave == wave,
+                                wave.to_string()
+                            )
+                        ).clicked() {
+                            self.model.wave = match wave {
+                                Wave::Square { .. } => Wave::Square { pw: 0.5 },
+                                other => other
+                            };
+                            sender.push(Message {
+                                channel: self.index,
+                                command: Command::SetWave(self.model.wave)
+                            }).unwrap();
+                        };
+                    }
+                });
+
+                ui.end_row();
+
+                ui.label("Width:");
+                ui.horizontal(|ui| {
+                    if let Wave::Square { pw } = &mut self.model.wave {
+                        if ui.add(
+                            egui::Slider::new(pw, 0.0..=1.0)
+                                .custom_formatter(|pw, _| format!("{:.0}%", 100.0 * pw))
+                        ).changed() {
+                            sender.push(Message {
+                                channel: self.index,
+                                command: Command::SetWave(self.model.wave)
+                            }).unwrap();
+                        };
+                    } else {
+                        ui.label("—-");
+                    }
+                });
+
+                ui.end_row();
+            });
     }
 }
