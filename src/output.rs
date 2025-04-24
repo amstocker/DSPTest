@@ -48,8 +48,6 @@ where
     let mut input_channels = [(); IN].map(|_| Channel::new());
     let mut input_buffer = [0.0; IN];
 
-    let mut out_channel_enabled = [true; OUT];
-
     device.build_output_stream(
         &config.config(),
 
@@ -58,15 +56,6 @@ where
 
             // Handle incoming messages from UI Thread
             while let Ok(msg) = receiver.pop() {
-                match msg.command {
-                    crate::input::Command::Enable => {
-                        out_channel_enabled[msg.channel] = true;
-                    },
-                    crate::input::Command::Disable => {
-                        out_channel_enabled[msg.channel] = false;
-                    },
-                    _ => ()
-                };
                 input_channels[msg.channel].handle_command(msg.command);
             }
 
@@ -82,8 +71,10 @@ where
                 // Handle module outputs
                 let mut outputs = [0.0; OUT];
                 module.map_outputs(&mut outputs);
+
+                // TODO: This doesn't actually make sense in general...
                 for i in 0..OUT {
-                    out_frame[i] = if out_channel_enabled[i] {
+                    out_frame[i] = if input_channels[i].enabled() {
                         outputs[i]
                     } else {
                         0.0
@@ -166,7 +157,7 @@ impl Widget {
             .show(ui, |ui| {
                 ui.label("Host:");
                 egui::ComboBox::from_id_salt("HostSelect")
-                    .selected_text(format!("{:?}", self.selected_host_name))
+                    .selected_text(format!("{}", self.selected_host_name))
                     .show_ui(ui, |ui| {
                         for (host, host_name) in &self.hosts {
                             if ui
@@ -182,7 +173,7 @@ impl Widget {
 
                 ui.label("Device:");
                 egui::ComboBox::from_id_salt("DeviceSelect")
-                    .selected_text(format!("{:?}", self.selected_device_name))
+                    .selected_text(format!("{}", self.selected_device_name))
                     .show_ui(ui, |ui| {
                         for (i, (_, device_name)) in self.devices.iter().enumerate() {
                             if ui

@@ -219,13 +219,12 @@ impl<const IN: usize, const OUT: usize, const SIZE: usize> Context<IN, OUT, SIZE
     }
 
     fn run(self) -> eframe::Result {
+        self.stream.play().unwrap();
+        
         let options = eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default().with_inner_size([1024.0, 500.0]),
             ..Default::default()
         };
-
-        self.stream.play().unwrap();
-
         eframe::run_native(
             "DSP Test",
             options,

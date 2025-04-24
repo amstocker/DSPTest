@@ -11,7 +11,8 @@ pub enum Wave {
     Sine,
     RampUp,
     RampDown,
-    Square { pw: f32 }
+    Square { pw: f32 },
+    Const
 }
 
 impl PartialEq for Wave {
@@ -29,6 +30,7 @@ impl std::fmt::Display for Wave {
             Wave::RampUp => write!(f, "Ramp Up"),
             Wave::RampDown => write!(f, "Ramp Down"),
             Wave::Square { .. } => write!(f, "Square"),
+            Wave::Const => write!(f, "Const")
         }
     }
 }
@@ -51,8 +53,12 @@ impl Channel {
             frequency: 0.0022,
             scale: 1.0,
             offset: 0.0,
-            enabled: true
+            enabled: false
         }
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.enabled
     }
 
     pub fn handle_command(&mut self, command: Command) {
@@ -91,6 +97,8 @@ impl Channel {
                 } else {
                     -1.0
                 },
+            Wave::Const =>
+                0.0
         };
         
         self.scale * sample + self.offset
@@ -137,7 +145,7 @@ impl Widget {
         egui::Grid::new(self.index)
             .striped(true)
             .show(ui, |ui| {
-                ui.label("Mute:");
+                ui.label("Audio:");
                 if ui.add(
                     egui::Checkbox::new(
                         &mut self.model.enabled,
@@ -158,7 +166,7 @@ impl Widget {
                 ui.label("Frequency:");
                 ui.horizontal(|ui| {
                     if ui.add(
-                        egui::Slider::new(&mut self.model.frequency, 1e-5..=5e-1)
+                        egui::Slider::new(&mut self.model.frequency, 0.0..=5e-1)
                             .logarithmic(true)
                             .custom_formatter(|f, _| format!("{:.4}", f))
                     ).changed() {
@@ -203,23 +211,28 @@ impl Widget {
 
                 ui.label("Wave:");
                 ui.horizontal(|ui| {
-                    for wave in Wave::iter() {
-                        if ui.add(
-                            egui::SelectableLabel::new(
-                                self.model.wave == wave,
-                                wave.to_string()
-                            )
-                        ).clicked() {
-                            self.model.wave = match wave {
-                                Wave::Square { .. } => Wave::Square { pw: 0.5 },
-                                other => other
-                            };
-                            sender.push(Message {
-                                channel: self.index,
-                                command: Command::SetWave(self.model.wave)
-                            }).unwrap();
-                        };
-                    }
+                    egui::ComboBox::from_id_salt(self.index)
+                        .selected_text(format!("{}", self.model.wave.to_string()))
+                        .show_ui(ui, |ui| {
+                            for wave in Wave::iter() {
+                                if ui.add(
+                                    egui::SelectableLabel::new(
+                                        self.model.wave == wave,
+                                        wave.to_string()
+                                    )
+                                ).clicked() {
+                                    self.model.wave = match wave {
+                                        Wave::Square { .. } => Wave::Square { pw: 0.5 },
+                                        other => other
+                                    };
+                                    sender.push(Message {
+                                        channel: self.index,
+                                        command: Command::SetWave(self.model.wave)
+                                    }).unwrap();
+                                };
+                            }
+                        });
+                    
                 });
 
                 ui.end_row();
