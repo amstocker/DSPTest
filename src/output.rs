@@ -48,6 +48,8 @@ where
     let mut input_channels = [(); IN].map(|_| Channel::new());
     let mut input_buffer = [0.0; IN];
 
+    let mut out_channel_enabled = [true; OUT];
+
     device.build_output_stream(
         &config.config(),
 
@@ -56,12 +58,21 @@ where
 
             // Handle incoming messages from UI Thread
             while let Ok(msg) = receiver.pop() {
+                match msg.command {
+                    crate::input::Command::Enable => {
+                        out_channel_enabled[msg.channel] = true;
+                    },
+                    crate::input::Command::Disable => {
+                        out_channel_enabled[msg.channel] = false;
+                    },
+                    _ => ()
+                };
                 input_channels[msg.channel].handle_command(msg.command);
             }
 
             let mut output_buffer = output_buffer.lock().unwrap();
             for out_frame in data.chunks_mut(channels) {
-                
+
                 // Handle module inputs
                 for i in 0..IN {
                     input_buffer[i] = input_channels[i].process();
@@ -69,8 +80,15 @@ where
                 module.map_inputs(&input_buffer);
                 
                 // Handle module outputs
-                let mut outputs = (&mut out_frame[0..OUT]).try_into().unwrap();
+                let mut outputs = [0.0; OUT];
                 module.map_outputs(&mut outputs);
+                for i in 0..OUT {
+                    out_frame[i] = if out_channel_enabled[i] {
+                        outputs[i]
+                    } else {
+                        0.0
+                    };
+                }
 
                 // Copy to output buffer
                 for i in 0..OUT {

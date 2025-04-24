@@ -35,11 +35,12 @@ impl std::fmt::Display for Wave {
 
 #[derive(Clone, Copy)]
 pub struct Channel {
+    enabled: bool,
     wave: Wave,
     phase: f32,
     frequency: f32,
     scale: f32,
-    offset: f32
+    offset: f32,
 }
 
 impl Channel {
@@ -49,7 +50,8 @@ impl Channel {
             phase: 0.0,
             frequency: 0.0022,
             scale: 1.0,
-            offset: 0.0
+            offset: 0.0,
+            enabled: true
         }
     }
 
@@ -62,7 +64,11 @@ impl Channel {
             Command::SetScale(scale) =>
                 self.scale = scale,
             Command::SetOffset(offset) =>
-                self.offset = offset
+                self.offset = offset,
+            Command::Enable =>
+                self.enabled = true,
+            Command::Disable =>
+                self.enabled = false
         }
     }
 
@@ -99,7 +105,9 @@ pub enum Command {
     SetWave(Wave),
     SetFrequency(f32),
     SetScale(f32),
-    SetOffset(f32)
+    SetOffset(f32),
+    Enable,
+    Disable
 }
 
 pub struct Message {
@@ -129,6 +137,24 @@ impl Widget {
         egui::Grid::new(self.index)
             .striped(true)
             .show(ui, |ui| {
+                ui.label("Mute:");
+                if ui.add(
+                    egui::Checkbox::new(
+                        &mut self.model.enabled,
+                        ""
+                    )
+                ).changed() {
+                    sender.push(Message {
+                        channel: self.index,
+                        command: match self.model.enabled {
+                            true => Command::Enable,
+                            false => Command::Disable,
+                        }
+                    }).unwrap();
+                };
+
+                ui.end_row();
+
                 ui.label("Frequency:");
                 ui.horizontal(|ui| {
                     if ui.add(

@@ -15,12 +15,15 @@ use rustfft::{algorithm::Radix4, FftDirection};
 
 use crate::input::{Event, Message, Widget as InputWidget};
 use crate::output::{
-    SAMPLE_RATE,
-    OutputBuffer,
     build_output_stream,
+    OutputBuffer,
     Widget as OutputWidget
 };
-use crate::analyze::{build_window_function, PlotView};
+use crate::analyze::{
+    build_window_function,
+    PlotView,
+    TimeSeriesTracking
+};
 
 
 const RINGBUFFER_CAPACITY: usize = 64;
@@ -54,6 +57,7 @@ pub struct Context<const IN: usize, const OUT: usize, const SIZE: usize> {
     fft_window_func: [f32; SIZE],
     output_channel: usize,
     plot_view: PlotView,
+    tracking: TimeSeriesTracking,
     running: bool
 }
 
@@ -119,6 +123,7 @@ impl<const IN: usize, const OUT: usize, const SIZE: usize> Context<IN, OUT, SIZE
             fft_window_func: build_window_function(),
             output_channel: 0,
             plot_view: PlotView::TimeSeries,
+            tracking: TimeSeriesTracking::Static,
             running: true
         }
     }
@@ -172,6 +177,7 @@ impl<const IN: usize, const OUT: usize, const SIZE: usize> Context<IN, OUT, SIZE
 
 
         // Process Time Series
+        // (TODO: Might be better to do a PLL here?)
         let dt = output_buffer.counter as f32;
         output_buffer.counter = 0;
         
@@ -201,9 +207,14 @@ impl<const IN: usize, const OUT: usize, const SIZE: usize> Context<IN, OUT, SIZE
             ) % SIZE;
         }
         
+        let offset = match self.tracking {
+            TimeSeriesTracking::Static => start,
+            TimeSeriesTracking::Following => self.output_buffer_phase,
+        };
+
         for i in 0..SIZE {
             self.output_buffer_time_series[i].y = 
-                output_buffer.buffer[self.output_channel][(self.output_buffer_phase + i) % SIZE] as f64;
+                output_buffer.buffer[self.output_channel][(offset + i) % SIZE] as f64;
         }
     }
 
@@ -213,7 +224,7 @@ impl<const IN: usize, const OUT: usize, const SIZE: usize> Context<IN, OUT, SIZE
             ..Default::default()
         };
 
-        self.stream.play().ok();
+        self.stream.play().unwrap();
 
         eframe::run_native(
             "DSP Test",
@@ -264,6 +275,7 @@ impl<const IN: usize, const OUT: usize, const SIZE: usize> eframe::App for Conte
 
                 ui.separator();
 
+
                 ui.label("Plot View:");
 
                 if ui.add(
@@ -291,6 +303,29 @@ impl<const IN: usize, const OUT: usize, const SIZE: usize> eframe::App for Conte
                     )
                 ).clicked() {
                     self.plot_view = PlotView::Window;
+                }
+
+                ui.separator();
+
+
+                ui.label("Tracking:");
+
+                if ui.add(
+                    egui::SelectableLabel::new(
+                        self.tracking == TimeSeriesTracking::Static,
+                        "Static"
+                    )
+                ).clicked() {
+                    self.tracking = TimeSeriesTracking::Static;
+                }
+
+                if ui.add(
+                    egui::SelectableLabel::new(
+                        self.tracking == TimeSeriesTracking::Following,
+                        "Following"
+                    )
+                ).clicked() {
+                    self.tracking = TimeSeriesTracking::Following;
                 }
             });
             

@@ -8,6 +8,12 @@ pub enum PlotView {
     Window
 }
 
+#[derive(PartialEq)]
+pub enum TimeSeriesTracking {
+    Static,
+    Following
+}
+
 pub fn build_window_function<const N: usize>() -> [f32; N] {
     let mut window = [0.0; N];
     for i in 0..N {
