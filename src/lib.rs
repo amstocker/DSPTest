@@ -46,7 +46,7 @@ pub struct Context<const IN: usize, const OUT: usize, const SIZE: usize> {
     output_buffer: Arc<Mutex<OutputBuffer<OUT, SIZE>>>,
     output_buffer_time_series: [PlotPoint; SIZE],
     output_buffer_freq_est: f32,
-    output_buffer_phase: f32,
+    output_buffer_phase: usize,
     output_spectrum_complex: [Complex32; SIZE],
     output_spectrum_magnitude: [PlotPoint; SIZE],
     output_spectrum_phase: [f32; SIZE],
@@ -111,7 +111,7 @@ impl<const IN: usize, const OUT: usize, const SIZE: usize> Context<IN, OUT, SIZE
             output_buffer,
             output_buffer_time_series: output_buffer_plot,
             output_buffer_freq_est: 0.0,
-            output_buffer_phase: 0.0,
+            output_buffer_phase: 0,
             output_spectrum_complex: [Complex32::default(); SIZE],
             output_spectrum_magnitude,
             output_spectrum_phase: [0.0; SIZE],
@@ -194,16 +194,16 @@ impl<const IN: usize, const OUT: usize, const SIZE: usize> Context<IN, OUT, SIZE
             };
         }
 
-        self.output_buffer_phase += self.output_buffer_freq_est * dt;
-        while !(self.output_buffer_phase < 1.0) {
-            self.output_buffer_phase -= 1.0;
+        if self.output_buffer_freq_est > 0.0 {
+            self.output_buffer_phase = (
+                self.output_buffer_phase
+                + (1.0 / self.output_buffer_freq_est).round() as usize
+            ) % SIZE;
         }
-
-        let shift = (self.output_buffer_phase * SIZE as f32).round() as usize;
-        println!("freq_est: {}, cycles: {}, dt: {}, shift: {}", self.output_buffer_freq_est, self.output_buffer_freq_est * dt, dt, shift);
+        
         for i in 0..SIZE {
             self.output_buffer_time_series[i].y = 
-                output_buffer.buffer[self.output_channel][(start + i).wrapping_sub(shift) % SIZE] as f64;
+                output_buffer.buffer[self.output_channel][(self.output_buffer_phase + i) % SIZE] as f64;
         }
     }
 
