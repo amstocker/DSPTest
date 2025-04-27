@@ -5,6 +5,8 @@ use rtrb::Producer;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
+use crate::output::ControlMessage;
+
 
 #[derive(Clone, Copy, EnumIter)]
 pub enum Wave {
@@ -37,12 +39,12 @@ impl std::fmt::Display for Wave {
 
 #[derive(Clone, Copy)]
 pub struct Channel {
-    enabled: bool,
     wave: Wave,
     phase: f32,
     frequency: f32,
     scale: f32,
     offset: f32,
+    enabled: bool
 }
 
 impl Channel {
@@ -53,12 +55,8 @@ impl Channel {
             frequency: 0.0022,
             scale: 1.0,
             offset: 0.0,
-            enabled: false
+            enabled: true
         }
-    }
-
-    pub fn enabled(&self) -> bool {
-        self.enabled
     }
 
     pub fn handle_command(&mut self, command: Command) {
@@ -71,9 +69,9 @@ impl Channel {
                 self.scale = scale,
             Command::SetOffset(offset) =>
                 self.offset = offset,
-            Command::Enable =>
+            Command::SetEnabled =>
                 self.enabled = true,
-            Command::Disable =>
+            Command::SetDisabled =>
                 self.enabled = false
         }
     }
@@ -82,6 +80,10 @@ impl Channel {
         self.phase += self.frequency;
         if self.phase >= 1.0 {
             self.phase -= 1.0;
+        }
+
+        if !self.enabled {
+            return 0.0;
         }
 
         let sample = match self.wave {
@@ -114,65 +116,57 @@ pub enum Command {
     SetFrequency(f32),
     SetScale(f32),
     SetOffset(f32),
-    Enable,
-    Disable
-}
-
-pub struct Message {
-    pub channel: usize,
-    pub command: Command
+    SetEnabled,
+    SetDisabled
 }
 
 
-pub struct Widget {
-    index: usize,
-    model: Channel
+pub struct Widget<const N: usize> {
+    models: [Channel; N]
 }
 
-impl Widget {
-    pub fn new(index: usize) -> Self {
+impl<const N: usize> Widget<N> {
+    pub fn new() -> Self {
         Widget {
-            index,
-            model: Channel::new()
+            models: [Channel::new(); N]
         }
     }
 
-    pub fn set_model(&mut self, model: Channel) {
-        self.model = model;
+    pub fn set_models(&mut self, models: [Channel; N]) {
+        self.models = models;
     }
 
-    pub fn render(&mut self, ui: &mut Ui, sender: &mut Producer<Message>) {
-        egui::Grid::new(self.index)
+    fn render_channel(&mut self, index: usize, ui: &mut Ui, sender: &mut Producer<ControlMessage>) {
+        egui::Grid::new(index)
             .striped(true)
             .show(ui, |ui| {
-                ui.label("Audio:");
-                if ui.add(
-                    egui::Checkbox::new(
-                        &mut self.model.enabled,
-                        ""
-                    )
-                ).changed() {
-                    sender.push(Message {
-                        channel: self.index,
-                        command: match self.model.enabled {
-                            true => Command::Enable,
-                            false => Command::Disable,
-                        }
-                    }).unwrap();
-                };
+                ui.label("Enabled:");
+                ui.horizontal(|ui| {
+                    if ui.add(
+                        egui::Checkbox::new(&mut self.models[index].enabled, "")
+                    ).changed() {
+                        sender.push(ControlMessage::InputControl {
+                            channel: index,
+                            command: match self.models[index].enabled {
+                                true => Command::SetEnabled,
+                                false => Command::SetDisabled,
+                            }
+                        }).unwrap();
+                    };
+                });
 
                 ui.end_row();
 
                 ui.label("Frequency:");
                 ui.horizontal(|ui| {
                     if ui.add(
-                        egui::Slider::new(&mut self.model.frequency, 0.0..=5e-1)
+                        egui::Slider::new(&mut self.models[index].frequency, 0.0..=5e-1)
                             .logarithmic(true)
                             .custom_formatter(|f, _| format!("{:.4}", f))
                     ).changed() {
-                        sender.push(Message {
-                            channel: self.index,
-                            command: Command::SetFrequency(self.model.frequency)
+                        sender.push(ControlMessage::InputControl {
+                            channel: index,
+                            command: Command::SetFrequency(self.models[index].frequency)
                         }).unwrap();
                     };
                 });
@@ -182,12 +176,12 @@ impl Widget {
                 ui.label("Scale:");
                 ui.horizontal(|ui| {
                     if ui.add(
-                        egui::Slider::new(&mut self.model.scale, 0.0..=1.0)
+                        egui::Slider::new(&mut self.models[index].scale, 0.0..=1.0)
                             .custom_formatter(|f, _| format!("{:.2}", f))
                     ).changed() {
-                        sender.push(Message {
-                            channel: self.index,
-                            command: Command::SetScale(self.model.scale)
+                        sender.push(ControlMessage::InputControl {
+                            channel: index,
+                            command: Command::SetScale(self.models[index].scale)
                         }).unwrap();
                     };
                 });
@@ -197,12 +191,12 @@ impl Widget {
                 ui.label("Offset:");
                 ui.horizontal(|ui| {
                     if ui.add(
-                        egui::Slider::new(&mut self.model.offset, -1.0..=1.0)
+                        egui::Slider::new(&mut self.models[index].offset, -1.0..=1.0)
                             .custom_formatter(|f, _| format!("{:.2}", f))
                     ).changed() {
-                        sender.push(Message {
-                            channel: self.index,
-                            command: Command::SetOffset(self.model.offset)
+                        sender.push(ControlMessage::InputControl {
+                            channel: index,
+                            command: Command::SetOffset(self.models[index].offset)
                         }).unwrap();
                     };
                 });
@@ -211,23 +205,23 @@ impl Widget {
 
                 ui.label("Wave:");
                 ui.horizontal(|ui| {
-                    egui::ComboBox::from_id_salt(self.index)
-                        .selected_text(format!("{}", self.model.wave.to_string()))
+                    egui::ComboBox::from_id_salt(index)
+                        .selected_text(format!("{}", self.models[index].wave.to_string()))
                         .show_ui(ui, |ui| {
                             for wave in Wave::iter() {
                                 if ui.add(
                                     egui::SelectableLabel::new(
-                                        self.model.wave == wave,
+                                        self.models[index].wave == wave,
                                         wave.to_string()
                                     )
                                 ).clicked() {
-                                    self.model.wave = match wave {
+                                    self.models[index].wave = match wave {
                                         Wave::Square { .. } => Wave::Square { pw: 0.5 },
                                         other => other
                                     };
-                                    sender.push(Message {
-                                        channel: self.index,
-                                        command: Command::SetWave(self.model.wave)
+                                    sender.push(ControlMessage::InputControl {
+                                        channel: index,
+                                        command: Command::SetWave(self.models[index].wave)
                                     }).unwrap();
                                 };
                             }
@@ -239,14 +233,14 @@ impl Widget {
 
                 ui.label("Width:");
                 ui.horizontal(|ui| {
-                    if let Wave::Square { pw } = &mut self.model.wave {
+                    if let Wave::Square { pw } = &mut self.models[index].wave {
                         if ui.add(
                             egui::Slider::new(pw, 0.0..=1.0)
                                 .custom_formatter(|pw, _| format!("{:.0}%", 100.0 * pw))
                         ).changed() {
-                            sender.push(Message {
-                                channel: self.index,
-                                command: Command::SetWave(self.model.wave)
+                            sender.push(ControlMessage::InputControl {
+                                channel: index,
+                                command: Command::SetWave(self.models[index].wave)
                             }).unwrap();
                         };
                     } else {
@@ -256,5 +250,14 @@ impl Widget {
 
                 ui.end_row();
             });
+    }
+
+    pub fn render(&mut self, ui: &mut Ui, sender: &mut Producer<ControlMessage>) {
+        ui.heading("Inputs");
+        ui.separator();
+        for i in 0..N {
+            self.render_channel(i, ui, sender);
+            ui.separator();
+        }
     }
 }

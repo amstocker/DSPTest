@@ -13,11 +13,15 @@ use rustfft::num_complex::Complex32;
 use rustfft::Fft;
 use rustfft::{algorithm::Radix4, FftDirection};
 
-use crate::input::{Event, Message, Widget as InputWidget};
+use crate::input::{
+    Event,
+    Widget as InputWidget
+};
 use crate::output::{
     build_output_stream,
     OutputBuffer,
-    Widget as OutputWidget
+    Widget as OutputWidget,
+    ControlMessage
 };
 use crate::analyze::{
     build_window_function,
@@ -25,15 +29,16 @@ use crate::analyze::{
     TimeSeriesTracking
 };
 
-
+const BUFFER_SIZE: usize = 8192;
 const RINGBUFFER_CAPACITY: usize = 64;
 
-pub trait Module<const IN: usize, const OUT: usize, const SIZE: usize>: 'static + Sized + Send {
+
+pub trait Module<const IN: usize, const OUT: usize>: 'static + Sized + Send {
     fn map_inputs(&mut self, input_buffer: &[f32; IN]);
     fn map_outputs(&mut self, output_buffer: &mut [f32; OUT]);
     
     fn run(self) -> eframe::Result {
-        let context: Context<IN, OUT, SIZE> = Context::new(self);
+        let context: Context<IN, OUT, BUFFER_SIZE> = Context::new(self);
 
         context.run()
     }
@@ -42,10 +47,10 @@ pub trait Module<const IN: usize, const OUT: usize, const SIZE: usize>: 'static 
 
 pub struct Context<const IN: usize, const OUT: usize, const SIZE: usize> {
     stream: Stream,
-    sender: Producer<Message>,
+    sender: Producer<ControlMessage>,
     receiver: Consumer<Event<IN>>,
-    input_widgets: [InputWidget; IN],
-    output_widget: OutputWidget,
+    input_widget: InputWidget<IN>,
+    output_widget: OutputWidget<OUT>,
     output_buffer: Arc<Mutex<OutputBuffer<OUT, SIZE>>>,
     output_buffer_time_series: [PlotPoint; SIZE],
     output_buffer_freq_est: f32,
@@ -64,7 +69,7 @@ pub struct Context<const IN: usize, const OUT: usize, const SIZE: usize> {
 impl<const IN: usize, const OUT: usize, const SIZE: usize> Context<IN, OUT, SIZE> {
     pub fn new<M>(module: M) -> Self
     where
-        M: 'static + Module<IN, OUT, SIZE> + Send
+        M: 'static + Module<IN, OUT> + Send
     {
         let (
             message_sender,
@@ -87,12 +92,7 @@ impl<const IN: usize, const OUT: usize, const SIZE: usize> Context<IN, OUT, SIZE
             output_buffer.clone()
         );
 
-        let mut index = 0;
-        let input_widgets = [(); IN].map(|_| {
-            let widget = InputWidget::new(index);
-            index += 1;
-            widget
-        });
+        let input_widget = InputWidget::new();
         
         let mut output_buffer_plot = [PlotPoint::new(0.0, 0.0); SIZE];
         for i in 0..SIZE {
@@ -103,14 +103,13 @@ impl<const IN: usize, const OUT: usize, const SIZE: usize> Context<IN, OUT, SIZE
         for i in 0..SIZE {
             let f = (i + 1) as f64 / SIZE as f64;
             output_spectrum_magnitude[i].x = f.log2();
-            // output_spectrum_magnitude[i].x = f;
         }
 
         Context {
             stream,
             sender: message_sender,
             receiver: event_receiver,
-            input_widgets,
+            input_widget,
             output_widget: OutputWidget::new(),
             output_buffer,
             output_buffer_time_series: output_buffer_plot,
@@ -222,7 +221,7 @@ impl<const IN: usize, const OUT: usize, const SIZE: usize> Context<IN, OUT, SIZE
         self.stream.play().unwrap();
         
         let options = eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default().with_inner_size([1024.0, 500.0]),
+            viewport: egui::ViewportBuilder::default().with_inner_size([1024.0, 700.0]),
             ..Default::default()
         };
         eframe::run_native(
@@ -238,28 +237,17 @@ impl<const IN: usize, const OUT: usize, const SIZE: usize> Context<IN, OUT, SIZE
 impl<const IN: usize, const OUT: usize, const SIZE: usize> eframe::App for Context<IN, OUT, SIZE> {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         while let Ok(Event::State(input_channels)) = self.receiver.pop() {
-            for i in 0..IN {
-                self.input_widgets[i].set_model(input_channels[i]);
-            }
+            self.input_widget.set_models(input_channels);
         }
 
         self.process_output_buffer();
 
-        egui::SidePanel::left("InputControls")
+        egui::SidePanel::left("Controls")
             .resizable(false)
             .show(ctx, |ui| {
-                ui.heading("Inputs");
-                ui.separator();
-                for widget in &mut self.input_widgets {
-                    widget.render(ui, &mut self.sender);
-                    ui.separator();
-                }
-
-                ui.heading("Options");
-                ui.separator();
-                self.output_widget.render(ui);
+                self.input_widget.render(ui, &mut self.sender);
+                self.output_widget.render(ui, &mut self.sender);
             });
-        
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -369,7 +357,6 @@ impl<const IN: usize, const OUT: usize, const SIZE: usize> eframe::App for Conte
                         );
                     })
             }
-            
         });
         
         if self.running {
@@ -377,3 +364,4 @@ impl<const IN: usize, const OUT: usize, const SIZE: usize> eframe::App for Conte
         }
     }
 }
+
